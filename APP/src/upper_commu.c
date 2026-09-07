@@ -688,15 +688,6 @@ wapi_info_t *get_wapi_info(void)
     return NULL;
 }
 
-wapi_info_t *get_wapi_info_default(void)
-{
-    if(upper_com_pri_data.if_init)
-        return  &g_user_save_info.wapi_info;
-    else
-        UP_COMMU_DEBUG_OUT("upper communicate not init!\r\n");    
-    return NULL;
-}
-
 cert_file_t *get_cert_file(void)
 {
     if(upper_com_pri_data.if_init)

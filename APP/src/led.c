@@ -1,5 +1,5 @@
 #include "led.h"
-#include "main.h"
+#include "bsp.h"
 #include "osal.h"
 
 #define LED_FLASH_PERIOD_TICK_FAST  25
@@ -43,26 +43,26 @@ static led_control_t led_control_table[] =
 {
     {UNDER_VOLTAGE, 1, {{led_yellow_on, led_off}}, LED_FLASH_DUTY, LED_FLASH_PERIOD_TICK_FAST, FLASH_CNT_MAX},
     {NETWORK_ENTRY_FAIL, 1, {{led_red_on, led_off}}, LED_FLASH_DUTY, LED_FLASH_PERIOD_TICK_FAST, FLASH_CNT_MAX},
-    
+
     {WAPI_COMMU, 1, {{led_green_on, led_off}}, LED_FLASH_DUTY, LED_FLASH_PERIOD_TICK_SLOW, FLASH_CNT_MAX},
     {WAPI_COMMU_CONNING, 1, {{led_green_on, led_off}}, LED_FLASH_DUTY, LED_FLASH_PERIOD_TICK_FAST, FLASH_CNT_MAX},
 
     {WAPI_CONFIG, 1, {{led_blue_on, led_off}}, LED_FLASH_DUTY, LED_FLASH_PERIOD_TICK_SLOW, FLASH_CNT_MAX},
     {WAPI_CONFIG_CONNING, 1, {{led_blue_on, led_off}}, LED_FLASH_DUTY, LED_FLASH_PERIOD_TICK_FAST, FLASH_CNT_MAX},
-    
+
 };
 
-static led_input_arg_t led_input_args = 
+static led_input_arg_t led_input_args =
 {
     .table = led_control_table,
     .table_num = sizeof(led_control_table) / sizeof(led_control_table[0]),
-    .os_if = &led_os_interface 
+    .os_if = &led_os_interface
 };
 
 led_handler_t   g_led_handler;
-        
+
 void led_init(void)
-{    
+{
     led_handler_status_t ret = led_handler_inst(&g_led_handler, &led_input_args);
     if(ret == LED_HANDLER_OK)
     {
@@ -73,7 +73,7 @@ void led_init(void)
         LED_DEBUG_OUT("LED handler instantiation failed with error: %d", ret);
         return;
     }
-    
+
     // led_ctrl(&g_led_handler, MOUNT, LED_CMD_ON);
 }
 
@@ -95,80 +95,46 @@ void led_off_all(void)
     }
 }
 
-/* Reconfigure the LED GPIOs to analog input mode (no pull) to eliminate GPIO
- * leakage current during sleep. Used by led_enter_low_power(). */
-static void led_gpio_analog(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Pin   = LED_RED_Pin | LED_GREEN_Pin | LED_BLUE_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-}
-
-/* Reconfigure the LED GPIOs (open-drain, no pull) and set them off.
- * Used by led_exit_low_power() to restore the pins after sleep. */
-static void led_gpio_reinit(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-    GPIO_InitStruct.Pin   = LED_RED_Pin | LED_GREEN_Pin | LED_BLUE_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-    /* Active-low LEDs: SET = off. */
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_GREEN_Pin | LED_BLUE_Pin, GPIO_PIN_SET);
-}
-
 void led_enter_low_power(void)
 {
-    /* Set LED pins to analog input mode to eliminate GPIO leakage current.
-     * HAL_GPIO_DeInit() is kept commented for comparison testing. */
+    /* Turn off all LEDs, then set LED pins to analog to eliminate GPIO leakage. */
     led_off_all();
-    led_gpio_analog();
-    // HAL_GPIO_DeInit(GPIOA, LED_RED_Pin | LED_GREEN_Pin | LED_BLUE_Pin);
-    // HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_GREEN_Pin | LED_BLUE_Pin, GPIO_PIN_SET);
+    bsp_led_enter_low_power();
 }
 
 void led_exit_low_power(void)
 {
-    /* Restore the LED GPIOs to open-drain outputs, all off. */
-    led_gpio_reinit();
+    /* Restore LED pins to open-drain output, all off. */
+    bsp_led_exit_low_power();
 }
 
 #if 1
 static void led_red_on(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin | LED_BLUE_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin, GPIO_PIN_RESET);
+    bsp_led_red_on();
 }
 static void led_green_on(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_BLUE_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin, GPIO_PIN_RESET);
+    bsp_led_green_on();
 }
 static void led_blue_on(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_GREEN_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, LED_BLUE_Pin, GPIO_PIN_RESET);
+    bsp_led_blue_on();
 }
 static void led_yellow_on(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_BLUE_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_GREEN_Pin, GPIO_PIN_RESET);
+    bsp_led_yellow_on();
 }
 static void led_magenta_on(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_BLUE_Pin, GPIO_PIN_RESET);
+    bsp_led_magenta_on();
 }
 static void led_cyan_on(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, LED_GREEN_Pin | LED_BLUE_Pin, GPIO_PIN_RESET);
+    bsp_led_cyan_on();
 }
 static void led_off(void)
 {
-    HAL_GPIO_WritePin(GPIOA, LED_RED_Pin | LED_GREEN_Pin | LED_BLUE_Pin, GPIO_PIN_SET);
+    bsp_led_all_off();
 }
 #endif

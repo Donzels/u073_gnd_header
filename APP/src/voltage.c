@@ -6,8 +6,8 @@
  *
  *   VOLTAGE_USE_ADC = 0  → PVD (Programmable Voltage Detector).
  *     Compares VDD against one of seven fixed thresholds (≈2.0…2.9 V) and raises
- *     an EXTI interrupt on a crossing. HAL_PWR_PVDCallback() reads PWR_FLAG_PVDO
- *     to decide the level and dispatches a voltage_event_t.
+ *     an EXTI interrupt on a crossing. The BSP's PVD callback dispatches a
+ *     voltage_event_t to the application callback registered via voltage_init().
  *
  *   VOLTAGE_USE_ADC = 1  → ADC1 + DMA + TC interrupt.
  *     ADC1 continuously samples the internal VREFINT channel; DMA circular mode
@@ -19,7 +19,7 @@
  */
 
 #include "voltage.h"
-#include "stm32u0xx_hal.h"
+#include "bsp.h"
 #include "dbg_console.h"
 #include "led.h"
 #include "low_power.h"
@@ -62,11 +62,6 @@ static volatile bool g_voltage_low = false;
 /** Queue handle: the DMA callback posts VDDA (mV) here; voltage_is_low()
  * receives from it. Created once in voltage_init(). */
 static osal_queue_handle_t g_voltage_queue = NULL;
-
-/* Declared in main.c (CubeMX-generated); not declared extern in any header. */
-extern ADC_HandleTypeDef hadc1;
-extern DMA_HandleTypeDef hdma_adc1;
-
 
 /* Average the DMA buffer and convert to VDDA (mV) via the VREFINT calibration.
  * Returns 0 if the data is invalid (should not happen once a conversion runs). */
@@ -131,17 +126,12 @@ static void voltage_init(voltage_level_t level, voltage_event_cb_t cb)
     /* Calibrate once at init. NOTE: HAL_ADC_Start_DMA() is NOT called here —
      * each voltage_is_low() triggers an on-demand conversion and waits for the
      * result, so there is no continuously-running DMA to stop on sleep. */
-    HAL_ADCEx_Calibration_Start(&hadc1);
+    bsp_adc_calibrate();
+
+    /* Register the ADC conversion-complete callback with the BSP. */
+    bsp_adc_register_conv_cplt_cb(voltage_adc_evaluate);
 
     VOLTAGE_DEBUG_OUT("voltage: ADC init (threshold=%u mV)", VOLTAGE_ADC_THRESHOLD_MV);
-}
-
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-    if (hadc == &hadc1)
-    {
-        voltage_adc_evaluate();
-    }
 }
 
 /* Trigger one on-demand conversion, wait for the result via the queue, and judge
@@ -159,19 +149,15 @@ bool voltage_is_low(void)
         /* discard */
     }
 
-    /* Start a conversion. HAL_ADC_Start_DMA resets the per-handle callback, so
-     * reinstall ours immediately after. */
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc_buf, VOLTAGE_ADC_BUF_SIZE);
+    /* Start a conversion. */
+    bsp_adc_start_dma((uint32_t *)g_adc_buf, VOLTAGE_ADC_BUF_SIZE);
 
     /* Wait for the DMA callback to post the result. */
     uint32_t vdda = 0U;
     int32_t ret = osal_queue_receive(g_voltage_queue, &vdda, VOLTAGE_RECV_TIMEOUT_MS);
 
-    /* Always stop ADC + DMA so they sit idle between on-demand calls. Single-
-     * conversion mode already halts the ADC; this also disarms the circular DMA
-     * channel. Doing it unconditionally (even on timeout) guarantees a clean
-     * state for the next call. */
-    HAL_ADC_Stop_DMA(&hadc1);
+    /* Always stop ADC + DMA so they sit idle between on-demand calls. */
+    bsp_adc_stop_dma();
 
     if (ret != OSAL_SUCCESS)
     {
@@ -209,17 +195,15 @@ void voltage_enter_low_power(void)
 {
     /* On-demand model: no conversion is running while idle, so there is nothing
      * to stop. Placeholder for symmetry with the PVD path. */
-    HAL_ADC_Stop_DMA(&hadc1);
-    // HAL_ADCEx_DisableVoltageRegulator(&hadc1);
+    bsp_adc_stop_dma();
     VOLTAGE_DEBUG_OUT("voltage: ADC idle (sleep)");
 }
 
 void voltage_exit_low_power(void)
 {
-    // HAL_ADC_Init(&hadc1);
     /* Re-calibrate after wakeup; the next voltage_is_low() will start a fresh
      * conversion. */
-    HAL_ADCEx_Calibration_Start(&hadc1);
+    bsp_adc_calibrate();
     VOLTAGE_DEBUG_OUT("voltage: ADC recalibrated (wakeup)");
 }
 
@@ -228,84 +212,40 @@ void voltage_exit_low_power(void)
 /* -------------------------------------------------------------------------- */
 #else
 
-#include "stm32u0xx_ll_pwr.h"   /* LL_PWR_IsActiveFlag_PVDO() */
-
-/**
- * @brief Override of the weak HAL PVD callback.
- *
- * Called from HAL_PWREx_PVD_PVM_IRQHandler() whenever the PVD EXTI rising or
- * falling flag fires. We read PWR_FLAG_PVDO (the live PVD output) to decide the
- * current level and dispatch the matching event to the application callback.
- *
- * PWR_FLAG_PVDO: SET → VDD is below the threshold (low); RESET → at/above (OK).
- */
-void HAL_PWR_PVDCallback(void)
+static void voltage_pvd_cb(bool low)
 {
     if (g_voltage_cb == NULL)
     {
         return;
     }
-
-    /* PVDO: 1 = VDD below threshold, 0 = VDD at/above threshold. */
-    if (LL_PWR_IsActiveFlag_PVDO() != 0U)
-    {
-        g_voltage_cb(VOLTAGE_EVENT_LOW);
-    }
-    else
-    {
-        g_voltage_cb(VOLTAGE_EVENT_OK);
-    }
+    g_voltage_cb(low ? VOLTAGE_EVENT_LOW : VOLTAGE_EVENT_OK);
 }
 
 static void voltage_init(voltage_level_t level, voltage_event_cb_t cb)
 {
     g_voltage_cb = cb;
 
-    /* Map the public voltage_level_t to the HAL PWR_PVDLEVEL_x constant. */
-    static const uint32_t level_table[] =
-    {
-        [VOLTAGE_LEVEL_2_0V] = PWR_PVDLEVEL_0,
-        [VOLTAGE_LEVEL_2_2V] = PWR_PVDLEVEL_1,
-        [VOLTAGE_LEVEL_2_4V] = PWR_PVDLEVEL_2,
-        [VOLTAGE_LEVEL_2_5V] = PWR_PVDLEVEL_3,
-        [VOLTAGE_LEVEL_2_6V] = PWR_PVDLEVEL_4,
-        [VOLTAGE_LEVEL_2_8V] = PWR_PVDLEVEL_5,
-        [VOLTAGE_LEVEL_2_9V] = PWR_PVDLEVEL_6,
-    };
-    uint32_t pvd_level = level_table[(uint32_t)level];
-
-    /* Configure threshold + interrupt mode (both edges). */
-    PWR_PVDTypeDef pvd_config =
-    {
-        .PVDLevel = pvd_level,
-        .Mode     = PWR_PVD_MODE_IT_RISING_FALLING,
-    };
-    HAL_PWR_ConfigPVD(&pvd_config);
-
-    /* Clear any stale EXTI flag so the first event reflects the real state. */
-    __HAL_PWR_PVD_EXTI_CLEAR_FLAG();
-
-    /* Enable the detector. */
-    HAL_PWR_EnablePVD();
+    bsp_pvd_init((bsp_pvd_level_t)level);
+    bsp_pvd_register_cb(voltage_pvd_cb);
+    bsp_pvd_enable();
 
     VOLTAGE_DEBUG_OUT("voltage: PVD init (level=%u)", (unsigned)level);
 }
 
 bool voltage_is_low(void)
 {
-    return (LL_PWR_IsActiveFlag_PVDO() != 0U);
+    return bsp_pvd_is_low();
 }
 
 void voltage_enter_low_power(void)
 {
-    HAL_PWR_DisablePVD();
+    bsp_pvd_disable();
     VOLTAGE_DEBUG_OUT("voltage: PVD disabled (sleep)");
 }
 
 void voltage_exit_low_power(void)
 {
-    HAL_PWR_EnablePVD();
-    __HAL_PWR_PVD_EXTI_CLEAR_FLAG();
+    bsp_pvd_enable();
     VOLTAGE_DEBUG_OUT("voltage: PVD enabled (wakeup)");
 }
 
@@ -321,7 +261,7 @@ static void undervoltage_callback(voltage_event_t event)
     {
         low_power_schedule_sleep_ms(UNDERVOLTAGE_SLEEP_MS, true);
         VOLTAGE_DEBUG_OUT("voltage: low detected");
-        led_on_off(UNDER_VOLTAGE, LED_CMD_ON);       
+        led_on_off(UNDER_VOLTAGE, LED_CMD_ON);
     }
     else if (event == VOLTAGE_EVENT_OK)
     {

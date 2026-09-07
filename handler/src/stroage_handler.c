@@ -1,9 +1,9 @@
 #include "stroage_handler.h"
-#include "stm32u0xx_hal.h"
+#include "bsp_flash.h"
 
 
-#define ON_CHIP_FLASH_END_ADDR  0x0801FFFF
-#define ON_CHIP_PAGE_SIZE       2048
+#define ON_CHIP_FLASH_END_ADDR  BSP_FLASH_END_ADDR
+#define ON_CHIP_PAGE_SIZE       BSP_FLASH_PAGE_SIZE
 
 
 static bool on_chip_flash_0_if_addr_valid(uint32_t addr);
@@ -48,82 +48,31 @@ static bool on_chip_flash_1_if_addr_valid(uint32_t addr)
 }
 
 static stroage_status_t on_chip_flash_erase(uint32_t addr, uint16_t len)
-{    
-    /* Calculate start page number from address */
-    uint32_t start_page = (addr - 0x08000000) / ON_CHIP_PAGE_SIZE;
-    uint32_t num_pages = (len + ON_CHIP_PAGE_SIZE - 1) / ON_CHIP_PAGE_SIZE;
-    
-    FLASH_EraseInitTypeDef flash = 
+{
+    if (!bsp_flash_erase(addr, len))
     {
-        .TypeErase = FLASH_TYPEERASE_PAGES,
-        .Page = start_page,
-        .NbPages = num_pages
-    };
-    HAL_StatusTypeDef flash_status;
-    // __disable_irq();/* FLASH_WaitForLastOperation inner timeout machanism need interrupt */
-    flash_status = HAL_FLASH_Unlock();
-    if(HAL_OK != flash_status)
-    {        
-        STR_HAN_DEBUG_ERR("flash unlock err!\r\n");
-        return STROAGE_ERR; 
-    }
-    /* Clear OPTVERR bit set on virgin samples */
-    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_OPTVERR);
-    uint32_t PageError;  
-    flash_status = HAL_FLASHEx_Erase(&flash, &PageError);
-    HAL_FLASH_Lock();  
-    // __enable_irq();/* FLASH_WaitForLastOperation inner timeout machanism need interrupt */
-    if(HAL_OK != flash_status)
-    {        
         STR_HAN_DEBUG_ERR("flash erase err!\r\n");
-        return STROAGE_ERR; 
+        return STROAGE_ERR;
     }
     return STORAGE_OK;
 }
 
 static stroage_status_t on_chip_flash_write(uint32_t addr, uint8_t *const data, uint16_t len)
 {
-    // __disable_irq();
-    
-    HAL_StatusTypeDef flash_status;
-    flash_status = HAL_FLASH_Unlock();
-    if (flash_status != HAL_OK) 
+    if (!bsp_flash_write(addr, data, len))
     {
-        STR_HAN_DEBUG_ERR("flash unlock err!\r\n");
+        STR_HAN_DEBUG_ERR("flash program err, addr=0x%08X!\r\n", addr);
         return STROAGE_ERR;
     }
-    /* Write data in 64-bit (8-byte) chunks */
-    uint16_t write_cnt = (len + sizeof(uint64_t) - 1) / sizeof(uint64_t);
-    for(uint16_t i = 0; i < write_cnt; i++)
-    {
-        uint32_t write_addr = addr + 8 * i;
-        uint64_t write_data = 0xFFFFFFFFFFFFFFFFULL; /* Default to erased value */
-        
-        /* Copy remaining bytes to write_data */
-        uint16_t bytes_to_write = (len > 8) ? 8 : len;
-        for(uint16_t j = 0; j < bytes_to_write; j++)
-        {
-            ((uint8_t*)&write_data)[j] = data[8*i + j];
-        }
-        len -= bytes_to_write;
-        
-        flash_status = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, write_addr, write_data);
-        if (flash_status != HAL_OK)
-        {
-            STR_HAN_DEBUG_ERR("flash program err, addr=0x%08X!\r\n", write_addr);
-            HAL_FLASH_Lock();
-            // __enable_irq();
-            return STROAGE_ERR;
-        }
-    }
-    HAL_FLASH_Lock();
-    // __enable_irq();
     return STORAGE_OK;
 }
 
 static stroage_status_t on_chip_flash_read(uint32_t addr, uint8_t *const out, uint16_t len)
 {
-    memcpy(out, (uint8_t*)addr, len);
+    if (!bsp_flash_read(addr, out, len))
+    {
+        return STROAGE_ERR;
+    }
     return STORAGE_OK;
 }
 

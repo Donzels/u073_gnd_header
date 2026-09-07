@@ -1,6 +1,6 @@
 #include "wapi_commu.h"
 #include "led.h"
-#include "main.h"
+#include "bsp.h"
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
@@ -38,7 +38,7 @@ static wapi_config_state_t g_wapi_config_state = CONFIG_STATE_NOT_CALLED;
 static high_relia_handler_t g_high_relia_handler_inst = {0};
 static uint8_t g_last_rfid_tag[6] = {0};  /* Global variable to store the last successfully read RFID tag. */
 
-static high_relia_ops_t g_high_relia_ops = 
+static high_relia_ops_t g_high_relia_ops =
 {
     .pf_get_rfid = get_rfid_6bytes,/* config in sending */
     .pf_get_uid  = get_unique_id_6bytes,
@@ -65,12 +65,12 @@ static void wapi_config_fail(void)
 {
     wapi_close();
     led_on_off(NETWORK_ENTRY_FAIL, LED_CMD_ON);
-    g_wapi_config_state = CONFIG_STATE_FAILED;   
+    g_wapi_config_state = CONFIG_STATE_FAILED;
     // g_wapi_config_state = CONFIG_STATE_NOT_CALLED;
-    // g_wapi_commu_state = COMMU_STATE_NOT_CALLED; 
+    // g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
     osal_task_delay_ms(ERROR_PENDING_TIMEOUT_MS);
     // led_on_off(NETWORK_ENTRY_FAIL, LED_CMD_OFF);
-    led_off_all();    
+    led_off_all();
     g_wapi_config_state = CONFIG_STATE_NOT_CALLED;
     g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
     low_power_schedule_sleep_ms(SLEEPTIME_COMPLETION_MS, true);
@@ -84,7 +84,7 @@ static void wapi_commu_conn(void)
         WAPI_COMMU_DEBUG_ERR("WAPI handler init failed: %d\r\n", ret);
         g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
         return;
-    }    
+    }
 
     ret = m0804c_use_cert_conn(&g_wapi_handler_inst);
     if (WAPI_OK != ret)
@@ -92,18 +92,18 @@ static void wapi_commu_conn(void)
         WAPI_COMMU_DEBUG_ERR("WAPI handler use cert connect failed: %d\r\n", ret);
         g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
         return;
-    }    
+    }
 }
 
 static void wapi_commu_fail_exec(void)
 {
     wapi_close();
     led_on_off(NETWORK_ENTRY_FAIL, LED_CMD_ON);
-    g_wapi_commu_state = COMMU_STATE_FAILED;  
-    // g_wapi_commu_state = COMMU_STATE_NOT_CALLED;  
+    g_wapi_commu_state = COMMU_STATE_FAILED;
+    // g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
     osal_task_delay_ms(ERROR_PENDING_TIMEOUT_MS);
     // led_on_off(NETWORK_ENTRY_FAIL, LED_CMD_OFF);
-    led_off_all();    
+    led_off_all();
     g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
     low_power_schedule_sleep_ms(SLEEPTIME_COMPLETION_MS, true);
 }
@@ -116,7 +116,7 @@ static void wapi_commu_fail(void)
     {
         fail_count = 0;
         wapi_commu_fail_exec();
-    }   
+    }
     else
     {
         wapi_commu_conn();
@@ -131,7 +131,7 @@ static osal_task_handle_t g_wapi_commu_task_handle = NULL;
 
 m0804c_handler_t g_wapi_handler_inst = {0};
 
-uart_rx_os_interface_t g_uart_os_interface = 
+uart_rx_os_interface_t g_uart_os_interface =
 {
     .pf_os_thread_create  = osal_task_create,
     .pf_os_thread_delete  = osal_task_delete,
@@ -143,7 +143,7 @@ uart_rx_os_interface_t g_uart_os_interface =
 };
 
 /* AT handler OSAL table */
-at_os_interface_t g_at_os_interface = 
+at_os_interface_t g_at_os_interface =
 {
     .pf_sema_binary_create    = osal_sema_binary_create,
     .pf_sema_delete           = osal_sema_delete,
@@ -159,82 +159,82 @@ static m0804c_os_interface_t g_wapi_os_interface = {
     .pf_os_delay_ms = osal_task_delay_ms,
 };
 
-static frame_parse_att_t wapi_frame_parse_att = 
+static frame_parse_att_t wapi_frame_parse_att =
 {
-    .recv_buf_att = &g_wapi_uart_rx_buf, 
+    .recv_buf_att = &g_wapi_uart_rx_buf,
     .parse_algo = NULL,    /**< Use built-in parse algorithm */
-}; 
+};
 
-static rx_thread_att_t wapi_rx_thread_att = 
+static rx_thread_att_t wapi_rx_thread_att =
 {
-    .parse_thread_att = 
+    .parse_thread_att =
     {
         .stack_depth = WAPI_COMMU_PARSE_THREAD_STACK_DEPTH,
         .thread_priority = WAPI_COMMU_PARSE_THREAD_PRIORITY - 1
     }
 };
 
-static uart_proto_input_arg_t wapi_uart_proto_input_arg = 
+static uart_proto_input_arg_t wapi_uart_proto_input_arg =
 {
-    .frame_parse_att = &wapi_frame_parse_att,  
-    .uart_ops = &g_wapi_uart_ops,        
-    .os_interface = &g_uart_os_interface,    
+    .frame_parse_att = &wapi_frame_parse_att,
+    .uart_ops = &g_wapi_uart_ops,
+    .os_interface = &g_uart_os_interface,
     .thread_att = &wapi_rx_thread_att
 };
 
-static at_input_arg_t  wapi_at_input_arg = 
+static at_input_arg_t  wapi_at_input_arg =
 {
-    .uart_proto_input_arg = &wapi_uart_proto_input_arg, 
+    .uart_proto_input_arg = &wapi_uart_proto_input_arg,
     .at_cmd_set_table = NULL,     /* Use built-in AT command table */
-    .at_os_interface = &g_at_os_interface       
+    .at_os_interface = &g_at_os_interface
 };
 
-static m0804c_pwr_ops_t wapi_pwr_ops = 
+static m0804c_pwr_ops_t wapi_pwr_ops =
 {
     .pf_m0804c_open = m0804c_open,
     .pf_m0804c_close = m0804c_close,
 };
 
-static wapi_data_provider_t wapi_data_provider = 
+static wapi_data_provider_t wapi_data_provider =
 {
     .pf_get_cert_file = m0804c_get_cert_file,
     .pf_get_wapi_info = m0804c_get_wapi_info,
-}; 
+};
 
-static wapi_data_provider_t wapi_cfg_data_provider = 
+static wapi_data_provider_t wapi_cfg_data_provider =
 {
     .pf_get_cert_file = m0804c_get_cert_file,
     .pf_get_wapi_info = m0804c_get_config_wapi_info,
-}; 
+};
 
-static wapi_callback_t wapi_callbacks = 
+static wapi_callback_t wapi_callbacks =
 {
     .pf_process_success_cb = wapi_process_success_cb,
     .pf_process_err_cb = wapi_process_err_cb,
 };
 
-static wapi_callback_t wapi_cfg_callbacks = 
+static wapi_callback_t wapi_cfg_callbacks =
 {
     .pf_process_success_cb = wapi_process_cfg_success_cb,
     .pf_process_err_cb = wapi_process_cfg_err_cb,
 };
 
-static wapi_m0804c_input_arg_t wapi_input_arg = 
+static wapi_m0804c_input_arg_t wapi_input_arg =
 {
     .at_input_arg = &wapi_at_input_arg,
-    .os_interface = &g_wapi_os_interface, 
-    .pwr_ops = &wapi_pwr_ops,     
+    .os_interface = &g_wapi_os_interface,
+    .pwr_ops = &wapi_pwr_ops,
     .data_provider = &wapi_data_provider,
-    .callbacks = &wapi_callbacks     
+    .callbacks = &wapi_callbacks
 };
 
-wapi_m0804c_input_arg_t wapi_cfg_input_arg = 
+wapi_m0804c_input_arg_t wapi_cfg_input_arg =
 {
     .at_input_arg = &wapi_at_input_arg,
-    .os_interface = &g_wapi_os_interface, 
-    .pwr_ops = &wapi_pwr_ops,     
+    .os_interface = &g_wapi_os_interface,
+    .pwr_ops = &wapi_pwr_ops,
     .data_provider = &wapi_cfg_data_provider,
-    .callbacks = &wapi_cfg_callbacks     
+    .callbacks = &wapi_cfg_callbacks
 };
 #endif
 
@@ -247,18 +247,7 @@ static int8_t wapi_send_data(const uint8_t *data, uint16_t len)
 
 static int8_t get_unique_id_6bytes(uint8_t *uid)
 {
-    /* STM32U073 unique ID is 96 bits (3 × 32-bit words). Take the lower 16 bits
-     * of each word to produce a 6-byte ID. */
-    uint32_t w0 = HAL_GetUIDw0();
-    uint32_t w1 = HAL_GetUIDw1();
-    uint32_t w2 = HAL_GetUIDw2();
-
-    uid[0] = (uint8_t)(w0 >> 0);
-    uid[1] = (uint8_t)(w0 >> 8);
-    uid[2] = (uint8_t)(w1 >> 0);
-    uid[3] = (uint8_t)(w1 >> 8);
-    uid[4] = (uint8_t)(w2 >> 0);
-    uid[5] = (uint8_t)(w2 >> 8);
+    bsp_get_uid(uid);
     return 0;
 }
 
@@ -268,7 +257,7 @@ static int8_t get_rfid_6bytes(uint8_t *rfid)
     memcpy(rfid, g_last_rfid_tag, 6);
     return 0;
 }
- 
+
 
 static void wapi_commu_task(void *argument)
 {
@@ -299,7 +288,7 @@ static void wapi_commu_task(void *argument)
         //     WAPI_COMMU_DEBUG_OUT("WAPI hall2 event sent to M0804C: %s, ret=%d", pkt, ret);
         // }
         memcpy(g_last_rfid_tag, ev.rfid, 5);  /* Store the last successfully read RFID tag in the global variable. */
-        send_info_high_reliable_uplink(&g_high_relia_handler_inst, (ev.edge == SWITCH_EDGE_FALLING) ? H_MOUNT : H_UNMOUNT);                                              
+        send_info_high_reliable_uplink(&g_high_relia_handler_inst, (ev.edge == SWITCH_EDGE_FALLING) ? H_MOUNT : H_UNMOUNT);
     }
 }
 
@@ -321,7 +310,7 @@ void wapi_commu_init(void)
             WAPI_COMMU_DEBUG_ERR("WAPI hall2 edge queue create failed: %d\r\n", (int)qret);
         }
         protocol_init();
-    }  
+    }
     if(g_wapi_commu_task_handle == NULL)
     {
         int32_t task_ret = osal_task_create("wapi_commu", wapi_commu_task, 1024, 20,
@@ -330,20 +319,20 @@ void wapi_commu_init(void)
         {
             WAPI_COMMU_DEBUG_ERR("WAPI commu task create failed: %d\r\n", (int)task_ret);
         }
-    }  
-    ret = m0804c_inst(&g_wapi_handler_inst, &wapi_input_arg); 
+    }
+    ret = m0804c_inst(&g_wapi_handler_inst, &wapi_input_arg);
 
     if(WAPI_ERR_ALREADY_INITED != ret && WAPI_OK != ret)
     {
         WAPI_COMMU_DEBUG_ERR("WAPI handler instance failed: %d\r\n", ret);
         g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
         return;
-    } 
+    }
     if(WAPI_ERR_ALREADY_INITED == ret)
     {
         m0804c_set_input_args(&g_wapi_handler_inst, &wapi_input_arg);
-    }    
-    
+    }
+
     WAPI_COMMU_DEBUG_OUT("WAPI handler instance success\r\n");
 
     m0804c_open(&g_wapi_handler_inst);
@@ -382,7 +371,7 @@ wapi_status_t wapi_commu_post_hall2_edge_rfid(switch_edge_t edge, const uint8_t 
     hall2_edge_event_t ev =
     {
         .edge = edge,
-        .tick = HAL_GetTick(),
+        .tick = bsp_get_tick(),
     };
     if (rfid != NULL)
     {
@@ -400,7 +389,7 @@ void wapi_config_init(pf_at_recv_parse_t recv_parse_cb)
     g_wapi_config_state = CONFIG_STATE_CONFIGURING;
     wapi_status_t ret = WAPI_OK;
 
-    ret = m0804c_inst(&g_wapi_handler_inst, &wapi_cfg_input_arg); 
+    ret = m0804c_inst(&g_wapi_handler_inst, &wapi_cfg_input_arg);
 
     if(WAPI_ERR_ALREADY_INITED != ret && WAPI_OK != ret)
     {
@@ -429,7 +418,7 @@ void wapi_config_init(pf_at_recv_parse_t recv_parse_cb)
         return;
     }
     WAPI_COMMU_DEBUG_OUT("WAPI handler use pwd connect success\r\n");
-    // m0804c_recv_parse(&g_wapi_handler_inst, recv_parse_cb);    
+    // m0804c_recv_parse(&g_wapi_handler_inst, recv_parse_cb);
 }
 
 wapi_config_state_t wapi_query_config_state(void)
@@ -445,15 +434,15 @@ void wapi_set_config_state(wapi_config_state_t state)
 #if 1
 static void m0804c_open(struct m0804c_handler *const self)
 {
-    HAL_GPIO_WritePin(GPIOB, WAPI_WAKE_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, WAPI_PWR_Pin, GPIO_PIN_RESET);    
-    osal_task_delay_ms(2000);   
+    bsp_wapi_wake_low();
+    bsp_wapi_pwr_on();
+    osal_task_delay_ms(2000);
     WAPI_COMMU_DEBUG_OUT("WAPI M0804C opened\r\n");
 }
 static void m0804c_close(struct m0804c_handler *const self)
 {
-    HAL_GPIO_WritePin(GPIOB, WAPI_WAKE_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, WAPI_PWR_Pin, GPIO_PIN_SET);  
+    bsp_wapi_wake_high();
+    bsp_wapi_pwr_off();
     osal_task_delay_ms(2000);
     WAPI_COMMU_DEBUG_OUT("WAPI M0804C closed\r\n");
 }
@@ -490,7 +479,7 @@ static void wapi_process_success_cb(struct m0804c_handler *const self, wapi_proc
             led_on_off(WAPI_COMMU, LED_CMD_ON);
             g_wapi_commu_state = COMMU_STATE_SUCCESS;
             WAPI_COMMU_DEBUG_OUT("WAPI PROCESS CONNECT SUCCESS\r\n");
-            break;        
+            break;
         default:
             break;
     }
@@ -581,60 +570,9 @@ void wapi_close(void)
     m0804c_close(&g_wapi_handler_inst);
 }
 
-/* Reconfigure all WAPI-related pins to analog input mode to eliminate GPIO
- * leakage during sleep: PA12 (WAPI_PWR), PB13 (WAPI_WAKE), PB10 (LPUART1_RX),
- * PB11 (LPUART1_TX). */
-static void wapi_gpio_analog(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    /* GPIOA: PA12 (WAPI_PWR) → analog, no pull */
-    GPIO_InitStruct.Pin  = WAPI_PWR_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    /* GPIOB: PB10/11 (LPUART1) + PB13 (WAPI_WAKE) → analog, no pull */
-    GPIO_InitStruct.Pin = GPIO_PIN_10 | GPIO_PIN_11 | WAPI_WAKE_Pin;
-    // GPIO_InitStruct.Pin = GPIO_PIN_10 | GPIO_PIN_11;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
-
-/* Restore all WAPI-related pins to their functional configuration:
- * PA12 → push-pull output (WAPI_PWR), PB13 → open-drain output (WAPI_WAKE),
- * PB10/11 → AF8 (LPUART1). */
-static void wapi_gpio_restore(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    /* PA12: WAPI_PWR, push-pull output */
-    GPIO_InitStruct.Pin   = WAPI_PWR_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    /* PB13: WAPI_WAKE, open-drain output */
-    GPIO_InitStruct.Pin   = WAPI_WAKE_Pin;
-    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_OD;
-    GPIO_InitStruct.Pull  = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    /* PB10/PB11: LPUART1_RX/TX, AF8, push-pull */
-    GPIO_InitStruct.Pin       = GPIO_PIN_10 | GPIO_PIN_11;
-    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull      = GPIO_NOPULL;
-    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF8_LPUART1;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
-
-/* Defined in main.c (CubeMX-generated); used here to disable the LPUART1 IDLE
- * interrupt before reconfiguring its pins to analog (and re-enable after
- * restore), so that the floating RX pin cannot trigger a spurious IDLE
- * interrupt during the pin-reconfiguration window around sleep. */
-extern UART_HandleTypeDef hlpuart1;
+/* -------------------------------------------------------------------------- */
+/*                        Low-power enter / exit                              */
+/* -------------------------------------------------------------------------- */
 
 void wapi_commu_enter_low_power(void)
 {
@@ -642,30 +580,11 @@ void wapi_commu_enter_low_power(void)
      * input mode to minimise sleep current. */
     g_wapi_config_state = CONFIG_STATE_NOT_CALLED;
     g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
-    // HAL_GPIO_WritePin(GPIOB, WAPI_WAKE_Pin, GPIO_PIN_SET);
-    // HAL_GPIO_WritePin(GPIOA, WAPI_PWR_Pin, GPIO_PIN_SET);
-    /* Disable the LPUART1 IDLE interrupt before reconfiguring PB10/11 so the
-     * floating RX pin cannot flag a spurious IDLE during/after reconfig. */
-    __HAL_UART_DISABLE_IT(&hlpuart1, UART_IT_IDLE);
-    /* Clear any stale error/idle flags so they don't fire once re-enabled. */
-    __HAL_UART_CLEAR_FLAG(&hlpuart1, UART_CLEAR_PEF | UART_CLEAR_FEF |
-                                     UART_CLEAR_NEF | UART_CLEAR_OREF |
-                                     UART_CLEAR_IDLEF);
-    wapi_gpio_analog();
+    bsp_wapi_enter_low_power();
 }
 
 void wapi_commu_exit_low_power(void)
 {
     /* Restore the WAPI pins to their functional configuration. */
-    wapi_gpio_restore();
-    /* Clear any flags that may have latched during the pin-reconfig window,
-     * then re-enable the LPUART1 IDLE interrupt. */
-    __HAL_UART_CLEAR_FLAG(&hlpuart1, UART_CLEAR_PEF | UART_CLEAR_FEF |
-                                     UART_CLEAR_NEF | UART_CLEAR_OREF |
-                                     UART_CLEAR_IDLEF);
-    __HAL_UART_ENABLE_IT(&hlpuart1, UART_IT_IDLE);
+    bsp_wapi_exit_low_power();
 }
-
-
-
-

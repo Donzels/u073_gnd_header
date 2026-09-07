@@ -12,7 +12,7 @@
  */
 
 #include "rfid.h"
-#include "main.h"
+#include "bsp.h"
 #include "osal.h"
 #include "dbg_console.h"
 #include "wapi_commu.h"
@@ -21,10 +21,6 @@
 
 /* Maximum number of read attempts before giving up (first try + retries). */
 #define RFID_READ_MAX_ATTEMPTS    3
-
-/* Defined in main.c (CubeMX-generated); not declared extern in any header. */
-extern TIM_HandleTypeDef htim2;
-extern TIM_HandleTypeDef htim15;
 
 static rfid_handler_t g_rfid_handler = {0};
 
@@ -57,23 +53,21 @@ static void __rfid_init(void)
 
 static void rfid_open(void)
 {
-    HAL_GPIO_WritePin(GPIOA, RFID_PWR_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, RFID_SLEEP_Pin, GPIO_PIN_SET);
+    bsp_rfid_pwr_off();
+    bsp_rfid_sleep_on();
     osal_task_delay_ms(10);
-    HAL_GPIO_WritePin(GPIOA, PWM_N_Pin, GPIO_PIN_SET);
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-    HAL_TIM_IC_Start_IT(&htim15, TIM_CHANNEL_1);
-    HAL_TIM_IC_Start_IT(&htim15, TIM_CHANNEL_2);
+    bsp_rfid_pwm_n_high();
+    bsp_rfid_carrier_start();
+    bsp_rfid_ic_start();
 }
 
 static void rfid_close(void)
 {
-    HAL_GPIO_WritePin(GPIOA, RFID_PWR_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(GPIOA, RFID_SLEEP_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOA, PWM_N_Pin, GPIO_PIN_RESET);
-    HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_3);
-    HAL_TIM_IC_Stop_IT(&htim15, TIM_CHANNEL_1);
-    HAL_TIM_IC_Stop_IT(&htim15, TIM_CHANNEL_2);
+    bsp_rfid_pwr_on();
+    bsp_rfid_sleep_off();
+    bsp_rfid_pwm_n_low();
+    bsp_rfid_carrier_stop();
+    bsp_rfid_ic_stop();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -82,32 +76,18 @@ static void rfid_close(void)
 
 static capture_edge_t get_capture_edge(void)
 {
-    /* Read the capture flags directly: CC1 = rising (DIRECTTI),
-     * CC2 = falling (INDIRECTTI). Reliable in time-sensitive ISR context,
-     * unlike sampling the pin level. */
-    if (__HAL_TIM_GET_FLAG(&htim15, TIM_FLAG_CC1))
-    {
-        // RF_DEBUG_OUT("r");
-        return EDGE_RISING;
-    }
-    if (__HAL_TIM_GET_FLAG(&htim15, TIM_FLAG_CC2))
-    {
-        // RF_DEBUG_OUT("f");
-        return EDGE_FALLING;
-    }
-    // RF_DEBUG_OUT("IC: no edge");
-    return EDGE_ERR; /* fallback */
+    /* bsp_rfid_edge_t ordering matches capture_edge_t (RISING=0, FALLING, ERR). */
+    return (capture_edge_t)bsp_rfid_get_capture_edge();
 }
 
 static uint32_t get_ic_value(capture_edge_t capture_edge)
 {
-    uint32_t cur_channel = (capture_edge == EDGE_RISING) ? TIM_CHANNEL_1 : TIM_CHANNEL_2;
-    return HAL_TIM_ReadCapturedValue(&htim15, cur_channel);
+    return bsp_rfid_get_ic_value((bsp_rfid_edge_t)capture_edge);
 }
 
 static uint32_t get_arr(void)
 {
-    return __HAL_TIM_GET_AUTORELOAD(&htim15);
+    return bsp_rfid_get_arr();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -250,81 +230,25 @@ void rfid_init(void)
 /*                        ISR callback                                         */
 /* -------------------------------------------------------------------------- */
 
-// void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-// {
-//     if (htim->Instance == TIM15)
-//     {
-//         demo_algo_isr_cb(&g_rfid_handler);
-//     }
-// }
-
 void ic_isr_cb(void)
 {
     demo_algo_isr_cb(&g_rfid_handler);
 }
 
-/* Reconfigure all RFID pins to analog input mode to eliminate GPIO leakage.
- * Covers: PA2 (TIM2_CH3), PA3 (PWM_N), PA4 (RFID_PWR), PA5 (RFID_SLEEP),
- *         PB14 (TIM15_CH1). */
-static void rfid_gpio_analog(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    /* GPIOA: PA2/PA3/PA4/PA5 → analog, no pull */
-    GPIO_InitStruct.Pin  = GPIO_PIN_2 | PWM_N_Pin | RFID_PWR_Pin | RFID_SLEEP_Pin;
-    // GPIO_InitStruct.Pin  = GPIO_PIN_2;
-    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    /* GPIOB: PB14 (TIM15_CH1) → analog, no pull */
-    GPIO_InitStruct.Pin = GPIO_PIN_14;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
-
-/* Restore all RFID pins to their functional configuration:
- * PA2 → AF1 (TIM2_CH3), PA3/PA4/PA5 → push-pull output, PB15 → AF14 (TIM15_CH1). */
-static void rfid_gpio_restore(void)
-{
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    /* PA2: TIM2_CH3, AF1, push-pull */
-    GPIO_InitStruct.Pin       = GPIO_PIN_2;
-    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull      = GPIO_NOPULL;
-    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    /* PA3/PA4/PA5: PWM_N / RFID_PWR / RFID_SLEEP, push-pull output */
-    GPIO_InitStruct.Pin       = PWM_N_Pin | RFID_PWR_Pin | RFID_SLEEP_Pin;
-    GPIO_InitStruct.Mode      = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull      = GPIO_NOPULL;
-    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = 0U;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-    /* PB14: TIM15_CH1, AF14, push-pull */
-    GPIO_InitStruct.Pin       = GPIO_PIN_14;
-    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull      = GPIO_NOPULL;
-    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
-    GPIO_InitStruct.Alternate = GPIO_AF14_TIM15;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-}
+/* -------------------------------------------------------------------------- */
+/*                        Low-power enter / exit                              */
+/* -------------------------------------------------------------------------- */
 
 void rfid_enter_low_power(void)
 {
     /* Stop the carrier PWM and input-capture timer, then set all RFID pins to
      * analog input mode to minimise sleep current. */
     rfid_close();
-    rfid_gpio_analog();
-    // HAL_GPIO_WritePin(GPIOA, RFID_PWR_Pin, GPIO_PIN_SET);
-    // HAL_GPIO_WritePin(GPIOA, PWM_N_Pin | RFID_SLEEP_Pin, GPIO_PIN_RESET);
+    bsp_rfid_enter_low_power();
 }
 
 void rfid_exit_low_power(void)
 {
     /* Restore the RFID pins to their functional configuration. */
-    rfid_gpio_restore();
+    bsp_rfid_exit_low_power();
 }

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk ' *)",
+      "Bash(dd if=build/both/u073_logic.bin bs=1 skip=$\\(\\(0xbee8\\)\\) count=$\\(\\(0x1ca6\\)\\))",
+      "Bash(arm-none-eabi-objdump -h build/both/CMakeFiles/u073_logic.dir/APP/src/led.c.obj)",
+      "Bash(objdump -h build/both/CMakeFiles/u073_logic.dir/APP/src/led.c.obj)",
+      "Bash(dd if=build/both/CMakeFiles/u073_logic.dir/APP/src/led.c.obj bs=1 skip=$\\(\\(0x3fc\\)\\) count=$\\(\\(0x5e\\)\\))",
+      "Bash(objdump -h build/both/CMakeFiles/u073_logic.dir/02_OS_Platform/OS_Implementation/ThreadX/src/os_impl_heap.c.obj)",
+      "Bash(arm-none-eabi-objdump -h build/both/u073_logic.elf)",
+      "Bash(arm-none-eabi-size -A build/both/u073_logic.elf)",
+      "Bash(arm-none-eabi-nm -S -l --size-sort build/both/u073_logic.elf)",
+      "Bash(mkdir -p \"g:/item/wapi_gnd_header/code/u073_gnd_header/BSP/inc\" \"g:/item/wapi_gnd_header/code/u073_gnd_header/BSP/src\")",
+      "Bash(cmake --build build --preset default)",
+      "Bash(cmake --build build --preset Debug)",
+      "Bash(cmake --build build/Debug)"
+    ],
+    "additionalDirectories": [
+      "g:\\item\\wapi_gnd_header\\code\\u073_gnd_header\\BSP"
+    ]
+  }
+}

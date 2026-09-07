@@ -64,6 +64,19 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     APP/src/voltage.c
 )
 
+# BSP module (wraps all HAL / chip-specific accesses)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    BSP/src/bsp_led.c
+    BSP/src/bsp_rfid.c
+    BSP/src/bsp_wapi.c
+    BSP/src/bsp_hall.c
+    BSP/src/bsp_system.c
+    BSP/src/bsp_adc.c
+    BSP/src/bsp_pvd.c
+    BSP/src/bsp_rtc.c
+    BSP/src/bsp_flash.c
+)
+
 # DEBUG / Segger RTT
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     DEBUG/SeggerRTT/Src/SEGGER_RTT.c
@@ -134,6 +147,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     handler/inc
     # APP module
     APP/inc
+    # BSP module
+    BSP/inc
     # DEBUG / Segger RTT
     DEBUG/SeggerRTT/Inc
     # DEBUG / Debug console
@@ -190,4 +205,9 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
 )
 
-target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -O3)
+# target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -O3)
+target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE $<$<CONFIG:Debug>:-O3>)
+
+target_link_options(u073_gnd_header PRIVATE
+    "-Wl,-Map=${CMAKE_BINARY_DIR}/u073_gnd_header.map"
+)

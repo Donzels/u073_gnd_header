@@ -1,13 +1,12 @@
 #include "hall.h"
 #include "switch_handler.h"
-#include "stm32u0xx_hal.h"
+#include "bsp.h"
 #include "dbg_console.h"
 #include "upper_commu.h"
 #include "led.h"
 #include "wapi_commu.h"
 #include "rfid.h"
 #include "low_power.h"
-#include "main.h"
 #include "voltage.h"
 
 #define HALL_DEBUG_OUT(fmt, ...)    dbg_console_printf(fmt "\r\n", ##__VA_ARGS__)
@@ -21,10 +20,10 @@ switch_handler_t g_hall2_handler_inst;
 
 static SWITCH_TICK_TYPE hall_get_tick_wrapper(void)
 {
-    return (SWITCH_TICK_TYPE)HAL_GetTick();
+    return (SWITCH_TICK_TYPE)bsp_get_tick();
 }
 
-/* HAL_GetTick() is 1 kHz: 1 tick == 1 ms. */
+/* bsp_get_tick() is 1 kHz: 1 tick == 1 ms. */
 static uint32_t hall_tick_2_ms_wrapper(SWITCH_TICK_TYPE tick)
 {
     return (uint32_t)tick;
@@ -44,8 +43,8 @@ static switch_os_interface_t g_switch_os_interface =
 
 static void under_voltage_callback(void)
 {
-    low_power_schedule_sleep_ms(UNDERVOLTAGE_SLEEP_MS, true); 
-    led_on_off(UNDER_VOLTAGE, LED_CMD_ON);       
+    low_power_schedule_sleep_ms(UNDERVOLTAGE_SLEEP_MS, true);
+    led_on_off(UNDER_VOLTAGE, LED_CMD_ON);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -57,7 +56,7 @@ void hall_press_event_cb(switch_press_type_t press_type)
     if(voltage_is_low())
     {
         HALL_DEBUG_OUT("HALL1: edge ignored due to low voltage");
-        under_voltage_callback(); 
+        under_voltage_callback();
         return;
     }
     switch (press_type)
@@ -77,7 +76,7 @@ void hall_press_event_cb(switch_press_type_t press_type)
                 low_power_schedule_sleep_ms(SLEEPTIME_CONFIG_MS, true);
                 led_off_all();
                 led_on_off(WAPI_CONFIG_CONNING, LED_CMD_ON);
-                wapi_config();                
+                wapi_config();
             }
             else if(wapi_query_config_state() == CONFIG_STATE_SUCCESS)
             {
@@ -85,11 +84,11 @@ void hall_press_event_cb(switch_press_type_t press_type)
                 led_off_all();
                 wapi_close();
                 wapi_set_config_state(CONFIG_STATE_NOT_CALLED);
-                wapi_set_commu_state(COMMU_STATE_NOT_CALLED);                
+                wapi_set_commu_state(COMMU_STATE_NOT_CALLED);
             }
-        }        
+        }
         /* wapi will close when CONFIG_STATE_FAILED in callback */
-  
+
         /* TODO: application long-press action */
         break;
 
@@ -108,7 +107,7 @@ static void hall1_edge_event_cb(switch_edge_t edge)
     if(voltage_is_low())
     {
         HALL_DEBUG_OUT("HALL1: edge ignored due to low voltage");
-        under_voltage_callback(); 
+        under_voltage_callback();
         return;
     }
     /* TODO: application hall1 edge action */
@@ -124,7 +123,7 @@ static void hall2_edge_event_cb(switch_edge_t edge)
     if(voltage_is_low())
     {
         HALL_DEBUG_OUT("HALL2: edge ignored due to low voltage");
-        under_voltage_callback(); 
+        under_voltage_callback();
         return;
     }
     if (edge == SWITCH_EDGE_RISING || edge == SWITCH_EDGE_FALLING)
@@ -133,24 +132,24 @@ static void hall2_edge_event_cb(switch_edge_t edge)
         // if(COMMU_STATE_NOT_CALLED == wapi_query_commu_state() && COMMU_STATE_SUCCESS == wapi_query_commu_state())
         {
             if(wapi_query_config_state() == CONFIG_STATE_NOT_CALLED)
-            {            
+            {
                 if(wapi_query_commu_state() == COMMU_STATE_NOT_CALLED)
                 {
                     low_power_schedule_sleep_ms(SLEEPTIME_COMMU_MS, true);
                     led_off_all();
                     led_on_off(WAPI_COMMU_CONNING, LED_CMD_ON);
                     wapi_commu_init();
-                    rfid_start_with_retry(edge);                
-                }    
-                // if(wapi_query_commu_state() == COMMU_STATE_SUCCESS)  
+                    rfid_start_with_retry(edge);
+                }
+                // if(wapi_query_commu_state() == COMMU_STATE_SUCCESS)
                 else if(wapi_query_commu_state() != COMMU_STATE_FAILED)
                 {
                     /* Start RFID read with retry logic. */
                     low_power_schedule_sleep_ms(SLEEPTIME_COMMU_MS, true);
-                    rfid_start_with_retry(edge);                 
-                }         
-            }  
-        }                
+                    rfid_start_with_retry(edge);
+                }
+            }
+        }
     }
 }
 
@@ -160,7 +159,7 @@ static void hall2_edge_event_cb(switch_edge_t edge)
 
 void hall_enter_low_power(void)
 {
-    __HAL_GPIO_EXTI_CLEAR_IT(HALL_EXTI_Pin | WKUP_EXTI_Pin);
+    bsp_hall_exti_clear();
 }
 
 void hall_exit_low_power(void)
@@ -170,15 +169,13 @@ void hall_exit_low_power(void)
 
 void hall2_sample_edge(void)
 {
-    GPIO_PinState level = HAL_GPIO_ReadPin(WKUP_EXTI_GPIO_Port, WKUP_EXTI_Pin);
-
-    if (level == GPIO_PIN_RESET)   /* low → falling edge */
-    {
-        switch_handler_falling_callback(&g_hall2_handler_inst);
-    }
-    else                            /* high → rising edge */
+    if (bsp_hall_wkup_read())   /* high → rising edge */
     {
         switch_handler_rising_callback(&g_hall2_handler_inst);
+    }
+    else                            /* low → falling edge */
+    {
+        switch_handler_falling_callback(&g_hall2_handler_inst);
     }
 }
 
@@ -194,7 +191,7 @@ void hall_init(void)
         HALL_DEBUG_OUT("HALL: inst failed, status=%d", (int)status);
     }
     else
-    {       
+    {
         /* Hall1: also register an EDGE listener for per-edge notifications. */
         switch_arg_u hall1_edge_arg =
         {
