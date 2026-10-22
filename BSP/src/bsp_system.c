@@ -55,6 +55,13 @@ void bsp_wdog_set_low(void)
     HAL_GPIO_WritePin(GPIOB, WATCH_DOG_OUT_Pin, GPIO_PIN_RESET);
 }
 
+void bsp_wdog_feed(void)
+{
+    bsp_wdog_set_high();
+    __NOP(); __NOP(); __NOP();
+    bsp_wdog_set_low();
+}
+
 /* -------------------------------------------------------------------------- */
 /*                        System power switch (SYS_POWER_SW)                   */
 /* -------------------------------------------------------------------------- */
@@ -82,6 +89,8 @@ void bsp_sys_enter_low_power(void)
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    
+    bsp_wdog_set_low();
 }
 
 void bsp_sys_exit_low_power(void)
@@ -95,7 +104,9 @@ void bsp_sys_exit_low_power(void)
     GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = 0U;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-    HAL_GPIO_WritePin(GPIOB, SYS_POWER_SW_Pin, GPIO_PIN_SET);
+    bsp_sys_pwr_set_high();
+
+    bsp_wdog_set_low();
 }
 
 /* -------------------------------------------------------------------------- */

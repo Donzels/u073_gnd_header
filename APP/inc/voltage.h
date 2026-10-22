@@ -37,7 +37,7 @@
  * against this value (with hysteresis); the voltage_level_t enum is NOT used by
  * the ADC path. Override at compile time to change the trip point. */
 #ifndef VOLTAGE_ADC_THRESHOLD_MV
-#define VOLTAGE_ADC_THRESHOLD_MV   2800U//3100U
+#define VOLTAGE_ADC_THRESHOLD_MV   2600U//3100U
 #endif
 
 /**

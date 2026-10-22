@@ -83,20 +83,6 @@ static void lp_rtc_alarm_handler(void)
 static void low_power_set_timer_seconds(uint32_t seconds);
 static void low_power_set_alarm_24h(void);
 
-/* RTC wakeup callback (registered with BSP). */
-static void lp_rtc_wakeup_cb(void)
-{
-    /* Toggle the watchdog pin from the ISR context (matches original behavior). */
-    bsp_wdog_toggle();
-    LP_DEBUG_OUT("low_power: wakeup timer callback");
-}
-
-/* RTC Alarm A callback (registered with BSP). */
-static void lp_rtc_alarm_cb(void)
-{
-    LP_DEBUG_OUT("low_power: alarm A callback");
-}
-
 /* Set by the RTC wakeup callback, cleared in thread context after wakeup, gating the
  * lp_rtc_wakeup_handler() call so it runs once per wakeup, in thread context. */
 static volatile bool g_rtc_wakeup_flag;
@@ -104,6 +90,25 @@ static volatile bool g_rtc_wakeup_flag;
 /* Set by the RTC Alarm A callback, cleared in thread context after wakeup, gating the
  * lp_rtc_alarm_handler() call so it runs once per alarm, in thread context. */
 static volatile bool g_rtc_alarm_flag;
+
+/* RTC wakeup callback (registered with BSP). */
+static void lp_rtc_wakeup_cb(void)
+{
+    /* Signal the wakeup to thread context. */
+    g_rtc_wakeup_flag = true;
+    /* Toggle the watchdog pin from the ISR context (matches original behavior). */
+    // bsp_wdog_toggle();
+    bsp_wdog_feed();
+    LP_DEBUG_OUT("low_power: wakeup timer callback");
+}
+
+/* RTC Alarm A callback (registered with BSP). */
+static void lp_rtc_alarm_cb(void)
+{
+    /* Signal the alarm to thread context. */
+    g_rtc_alarm_flag = true;
+    LP_DEBUG_OUT("low_power: alarm A callback");
+}
 
 /* -------------------------------------------------------------------------- */
 /*                        Tick/count conversion                               */
@@ -137,15 +142,17 @@ void low_power_init(void)
      */
     bsp_rtc_wakeup_stop();
 
+    /* Register the RTC callbacks with the BSP BEFORE setting up alarms.
+     * This ensures any stale interrupt flags from CubeMX initialization
+     * are properly handled. */
+    bsp_rtc_wakeup_register_cb(lp_rtc_wakeup_cb);
+    bsp_rtc_alarm_register_cb(lp_rtc_alarm_cb);
+
     /* The MX_RTC_Init() placeholder also arms Alarm A (00:00:00, date masked).
      * Deactivate it and re-arm as a 24 h periodic wakeup at the current time. */
     bsp_rtc_alarm_stop();
     low_power_set_alarm_24h();
     g_rtc_alarm_flag = false;  /* discard any stale flag from the placeholder */
-
-    /* Register the RTC callbacks with the BSP. */
-    bsp_rtc_wakeup_register_cb(lp_rtc_wakeup_cb);
-    bsp_rtc_alarm_register_cb(lp_rtc_alarm_cb);
 
     LP_DEBUG_OUT("low_power: init (Stop 2, wakeup clk %u Hz)", LP_WAKEUP_CLK_HZ);
 

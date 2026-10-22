@@ -25,6 +25,7 @@ void bsp_get_uid(uint8_t *uid_6bytes);
 void bsp_wdog_toggle(void);
 void bsp_wdog_set_high(void);
 void bsp_wdog_set_low(void);
+void bsp_wdog_feed(void);
 
 /* ---- System power switch (SYS_POWER_SW, SET = power on) ---- */
 void bsp_sys_pwr_set_high(void);

@@ -103,6 +103,22 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 
+/* --------------------------------------------------------------------------
+ * WAPI module firmware-upgrade test mode.
+ * Define WAPI_UPGRADE_TEST to build a firmware that ONLY runs the WAPI
+ * bootloader-entry sequence (no RTOS tasks are started):
+ *   1. Power on the WAPI module
+ *   2. Pull PB12 high (boot/upgrade pin)
+ *   3. Power off the WAPI module for 1 s
+ *   4. Power on the WAPI module again
+ * Comment it out to build the normal application.
+ * ------------------------------------------------------------------------ */
+// #define WAPI_UPGRADE_TEST
+
+/* PB12: WAPI module boot/upgrade pin (not routed in CubeMX). */
+#define WAPI_UPGRADE_BOOT_Pin       GPIO_PIN_12
+#define WAPI_UPGRADE_BOOT_GPIO_Port GPIOB
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

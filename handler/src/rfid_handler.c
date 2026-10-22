@@ -39,13 +39,14 @@
    - "1" = 01 (LSB=1, MSB=0)
    - "0" = 10 (LSB=0, MSB=1)
    Original header: 9 consecutive Manchester "1" bits */
-/* Extended header used for demodulation: adds a Manchester "0" (stop bit) before original header to improve capture probability */
+/* Extended header used for demodulation: adds a Manchester "0" (stop bit) 
+    before original header to improve capture probability */
 #define ORI_HEADER_MANCHER_BITS     (0x15555ULL)
 #define EXTEN_HEADER_MANCHER_BITS   (0x55556ULL)
 
 #define HEADER_MANCHER_VALUE        (0x1FFULL)/* 9 consecutive 1 */
 
-/* Full data period = 32.768ms (64��512us), demod timeout �� 2��period */
+/* Full data period = 32.768ms (64*512us), demod timeout must >= 2*period */
 #define DEMOD_TOTAL_MS              120//400 /* Demodulation timeout (ms) */
 
 

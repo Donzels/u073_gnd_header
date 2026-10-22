@@ -27,6 +27,9 @@
 #include "WAPI_M0804C.h"
 #include "upper_commu.h"
 #include "low_power.h"
+#ifdef WAPI_UPGRADE_TEST
+#include "bsp_wapi.h"
+#endif
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -80,6 +83,53 @@ static void MX_ADC1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#ifdef WAPI_UPGRADE_TEST
+/**
+ * @brief WAPI module firmware-upgrade entry test.
+ *
+ * Forces the M0804C module into its bootloader/upgrade mode by power-cycling
+ * it while the boot pin (PB12) is held high. Runs once, then idles forever so
+ * no RTOS kernel (and therefore no application task) is ever started.
+ */
+static void wapi_upgrade_test(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    /* PB12: WAPI module boot/upgrade pin, push-pull output. */
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    GPIO_InitStruct.Pin   = WAPI_UPGRADE_BOOT_Pin;
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(WAPI_UPGRADE_BOOT_GPIO_Port, &GPIO_InitStruct);
+
+    dbg_console_printf("WAPI upgrade test start\r\n");
+
+    /* 1. Power on the WAPI module. */
+    // bsp_wapi_pwr_on();
+    // HAL_Delay(100);
+
+    /* 2. Pull PB12 high to request bootloader/upgrade mode. */
+    HAL_GPIO_WritePin(WAPI_UPGRADE_BOOT_GPIO_Port, WAPI_UPGRADE_BOOT_Pin, GPIO_PIN_SET);
+
+    /* 3. Power off the module for 1 s while the boot pin stays high. */
+    bsp_wapi_pwr_off();
+    HAL_Delay(500);
+
+    /* 4. Power the module back on; it now boots into upgrade mode. */
+    bsp_wapi_pwr_on();
+    HAL_Delay(1000);
+    HAL_GPIO_WritePin(WAPI_UPGRADE_BOOT_GPIO_Port, WAPI_UPGRADE_BOOT_Pin, GPIO_PIN_RESET);
+    dbg_console_printf("WAPI upgrade test done, module in upgrade mode\r\n");
+
+    /* Hold here forever: the RTOS kernel is never started in test mode. */
+    while (1)
+    {
+        HAL_Delay(1000);
+    }
+}
+#endif /* WAPI_UPGRADE_TEST */
+
 /* USER CODE END 0 */
 
 /**
@@ -124,11 +174,17 @@ int main(void)
 /*     SEGGER_RTT_printf(0, "u073 init\r\n");                              */
     dbg_console_init();
     dbg_console_printf("u073 init\r\n");
+#ifdef WAPI_UPGRADE_TEST
+    /* Test mode: run only the WAPI upgrade sequence. It never returns, so the
+     * RTOS kernel and all application tasks are never started. */
+    wapi_upgrade_test();
+#else
     upper_commu_init();
+
   /* USER CODE END 2 */
 
   MX_ThreadX_Init();
-
+#endif
   /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
@@ -163,11 +219,16 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE|RCC_OSCILLATORTYPE_LSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = RCC_PLLM_DIV1;
+  RCC_OscInitStruct.PLL.PLLN = 16;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
+  RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV8;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -177,7 +238,7 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
 

@@ -296,7 +296,7 @@ typedef struct
     void (*pf_os_thread_delete)(void *const handle);
     int32_t (*pf_os_queue_create)(size_t num, size_t size, void **handle);
     int32_t (*pf_os_queue_put)(void *queue, const void *item, uint32_t timeout);
-    int32_t (*pf_os_queue_get)(void *queue, const void *item, uint32_t timeout);
+    int32_t (*pf_os_queue_get)(void *queue, void *item, uint32_t timeout);
     uint32_t (*pf_os_enter_critical)(void);
     void (*pf_os_exit_critical)(uint32_t primask);
 } uart_rx_os_interface_t;

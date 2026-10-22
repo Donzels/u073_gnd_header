@@ -5,21 +5,23 @@
 ```
 +-----------------------------------------------------------------------------+
 |                          APPLICATION LAYER                                  |
-|   Pure business logic; calls BSP APIs only. No HAL/LL/register access.      |
+|   Implements business logic and uses high-level module interfaces.          |
+|   No direct access to HAL, LL, or raw register-level code.                 |
 +-----------------------------------------------------------------------------+
 |                          HANDLER LAYER                                      |
-|   State machines, algorithms, protocol parsing. Chip-agnostic.              |
-|   Calls OSAL and its own ops tables; never touches hardware.                |
+|   Provides a unified abstraction for specific external devices/modules.     |
+|   Encapsulates device-specific logic, state transitions, and protocol       |
+|   handling while hiding low-level implementation details.                   |
 +-----------------------------------------------------------------------------+
 |                          BSP (Board Support Package)                        |
-|   Wraps all HAL/LL calls behind application-meaningful function names.      |
-|   Only this layer (besides Core/Src/) may invoke HAL/LL.                    |
+|   Wraps HAL/LL APIs into board-level, application-oriented interfaces.     |
+|   This layer is responsible for hardware adaptation and platform control.   |
 +-----------------------------------------------------------------------------+
 |                          OS ABSTRACTION LAYER (OSAL)                        |
-|   Unified OS API (threads, queues, timers, mutexes).                        |
+|   Provides a unified OS interface for threads, queues, timers, and mutexes. |
 +-----------------------------------------------------------------------------+
 |                          HAL / LL (ST Driver Library)                       |
-|   Chip-specific register access. Provided by STM32CubeMX / ST.              |
+|   Low-level chip drivers and register access provided by STM32CubeMX / ST.  |
 +-----------------------------------------------------------------------------+
 ```
 
@@ -69,7 +71,6 @@ u073_gnd_header/
 |   +-- WAPI_M0804C.c
 |   +-- stroage_handler.c
 |   |   +-- BSP/bsp_flash.c
-|   +-- high_relia_handler.c
 |
 +-- BSP/  (Board Support Package)
 |   +-- bsp_led.c       --> HAL_GPIO_WritePin, HAL_GPIO_Init
@@ -83,9 +84,9 @@ u073_gnd_header/
 |   +-- bsp_flash.c     --> HAL_FLASH_Unlock, HAL_FLASHEx_Erase, HAL_FLASH_Program, HAL_FLASH_Lock
 |
 +-- 02_OS_Platform/  (OS Abstraction Layer)
+|   +-- OS_Adapter/
 |   +-- OS_Wrapper/
 |   +-- OS_Implementation/
-|   +-- OS_Adapter/
 |
 +-- Drivers/  (HAL / LL Driver Library)
     +-- STM32U0xx_HAL_Driver/
@@ -99,7 +100,7 @@ u073_gnd_header/
 | Layer            | Folder              | Responsibility                        | Can Call                                    | Must Not Call          |
 |------------------|---------------------|---------------------------------------|---------------------------------------------|------------------------|
 | **Application**  | `APP/`              | Business logic                        | BSP API, Handler API, OSAL                  | HAL / LL / registers   |
-| **Handler**      | `handler/`          | State machines, algorithms, protocol  | OSAL, own ops tables, APP callbacks, **BSP** | HAL / LL / registers   |
+| **Handler**      | `handler/`          | Unified abstraction for specific devices/modules | OSAL, own ops tables, APP callbacks, **BSP** | HAL / LL / registers   |
 | **BSP**          | `BSP/`              | Wrap HAL/LL into meaningful functions | HAL / LL, `main.h` pin definitions, CMSIS   | APP (one-way only)     |
 | **OSAL**         | `02_OS_Platform/`   | OS abstraction                        | OS implementation (ThreadX)                 | --                     |
 | **Driver**       | `Drivers/`          | Chip-specific register access         | Hardware registers                          | --                     |

@@ -20,8 +20,11 @@
 #define AT_TIMEOUT_TICK_LONG                30000
 #define AT_INTERVAL_TICK                    1000
 #define AT_ERR_REPEAT_CNT                   5
-#define WAPI_PROCESS_RETRY_MAX              1
-#define WAPI_PROCESS_FAIL_MAX               1
+/* Max total attempts of a single process table, first attempt included.
+ * E.g. 3 = run the table up to 3 times (1 first try + 2 retries).
+ * Whole-flow retries (init -> cert/pwd -> connect) are owned by the APP layer,
+ * so there is deliberately no WAPI_PROCESS_FAIL_MAX here any more. */
+#define WAPI_PROCESS_ATTEMPT_MAX            1
 
 #define SEND_BUF_SIZE                       128       
 
@@ -60,6 +63,7 @@ typedef enum
     SET_LOW_PWR,
     DISCONN_TRANS,
     SET_IP,
+    SET_DHCP,
     CONN_WAPI_BY_CERT,
     CONN_WAPI_BY_PWD,
     CHECK_LINK_LAYER,
@@ -115,6 +119,7 @@ typedef struct m0804c_priv_data
 {
     bool is_inited;
     bool trans_send_flag;
+    bool is_use_dhcp;
     void *trans_send_sem_handle;        /* given when trans_send_flag == true, taken when false */
     wapi_conn_mode_t wapi_conn_mode;
     void *process_syn_sema_handle;
@@ -155,8 +160,10 @@ static void wapi_both_2p4_5g(m0804c_handler_t *const self);
 static void wapi_reboot(m0804c_handler_t *const self);
 static void wapi_set_tx_pwr(m0804c_handler_t *const self);
 static void wapi_disable_low_pwr(m0804c_handler_t *const self);
-static void wapi_disconn_transect(m0804c_handler_t *const self);
+static void wapi_disconn_trans(m0804c_handler_t *const self);
 static void wapi_set_net_config(m0804c_handler_t *const self);
+static void wapi_set_dhcp(m0804c_handler_t *const self);
+static void wapi_set_net_config_by_mode(m0804c_handler_t *const self);
 static void wapi_connect_by_cert(m0804c_handler_t *const self);
 static void wapi_connect_by_pwd(m0804c_handler_t *const self);
 static void wapi_check_link_layer_connect(m0804c_handler_t *const self);
@@ -238,6 +245,7 @@ static const at_cmd_set_t m0804c_at_table[] =
     {SET_LOW_PWR, "AT+SETDP=%d\r\n", {.items = {{at_recv_parse_ok, NULL}}, .count = 1}},
     {DISCONN_TRANS, "AT+WSDISCNCT\r\n", {.items = {{at_recv_parse_ok, NULL}}, .count = 1}},
     {SET_IP, "AT+WFIXIP=%d,%d.%d.%d.%d,%d.%d.%d.%d,%d.%d.%d.%d\r\n", {.items = {{at_recv_parse_ok, NULL}}, .count = 1}},
+    {SET_DHCP, "AT+WFIXIP=0\r\n", {.items = {{at_recv_parse_ok, NULL}}, .count = 1}},
     {CONN_WAPI_BY_CERT, "AT+WAPICT,%d,%s\r\n", {.items = {{at_recv_parse_ok, NULL}}, .count = 1}},
     {CONN_WAPI_BY_PWD, "AT+WAPICT,%d,%s,%s\r\n", {.items = {{at_recv_parse_ok, NULL}}, .count = 1}},
     {CHECK_LINK_LAYER, "AT+WAPICT=?\r\n", {.items = {{at_recv_parse_link_layer_check, NULL}}, .count = 1}},
@@ -266,22 +274,25 @@ static wapi_process_t wapi_process_init[] =
     {wapi_both_2p4_5g,      wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},
     {wapi_set_tx_pwr,       wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},
     {wapi_disable_low_pwr,  wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},
-    {wapi_disconn_transect, wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},
-    {wapi_set_net_config,   wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},  
+    {wapi_disconn_trans, wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},
 };
 
 #if IS_USE_CONN_BY_CERT
 static wapi_process_t wapi_process_use_cert[] = 
 {
-    {wapi_check_cert,      wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 0},
-    {wapi_connect_by_cert, wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 5*AT_INTERVAL_TICK},    
+    {wapi_set_net_config_by_mode, wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 0},
+    {wapi_no_echo,          wapi_process_complete_cb, 2*AT_TIMEOUT_TICK_STANDARD, 0},
+    {wapi_check_cert,            wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 0},
+    {wapi_connect_by_cert,       wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 5*AT_INTERVAL_TICK},    
 };
 #endif
 
 #if IS_USE_CONN_BY_PWD
 static wapi_process_t wapi_process_use_pwd[] = 
 {
-    {wapi_connect_by_pwd, wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 5*AT_INTERVAL_TICK},    
+    {wapi_set_net_config_by_mode, wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 0},
+    {wapi_no_echo,          wapi_process_complete_cb, 2*AT_TIMEOUT_TICK_STANDARD, 0},
+    {wapi_connect_by_pwd,         wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD, 5*AT_INTERVAL_TICK},    
 };
 #endif
 
@@ -290,8 +301,8 @@ static wapi_process_t wapi_process_conn_net[] =
     
     // {wapi_scan_net,                 wapi_process_complete_cb, 5*AT_TIMEOUT_TICK_STANDARD, 3*AT_INTERVAL_TICK},
     {wapi_check_link_layer_connect, wapi_process_complete_cb, 5*AT_TIMEOUT_TICK_STANDARD, 3*AT_INTERVAL_TICK},
-    {wapi_tcp_connect,              wapi_process_complete_cb, AT_TIMEOUT_TICK_LONG,       0},
-    {wapi_recv_data,                wapi_process_complete_cb, AT_TIMEOUT_TICK_STANDARD,   0},
+    {wapi_tcp_connect,              wapi_process_complete_cb, AT_TIMEOUT_TICK_LONG,       3*AT_INTERVAL_TICK},
+    {wapi_recv_data,                wapi_process_complete_cb, 5*AT_TIMEOUT_TICK_STANDARD,   0},
 };
 
 static wapi_process_t wapi_process_disconn[] = 
@@ -619,7 +630,7 @@ static void wapi_disable_low_pwr(m0804c_handler_t *const self)
     AT_CMD_SEND(wapi_get_at_handler(self), SET_LOW_PWR, 0);/* diable low power model */
 }
 
-static void wapi_disconn_transect(m0804c_handler_t *const self)
+static void wapi_disconn_trans(m0804c_handler_t *const self)
 {
     AT_CMD_SEND(wapi_get_at_handler(self), DISCONN_TRANS);
 }
@@ -633,6 +644,27 @@ static void wapi_set_net_config(m0804c_handler_t *const self)
                 wapi_info->local_ip_mask[2], wapi_info->local_ip_mask[3],\
                 wapi_info->local_gateway[0], wapi_info->local_gateway[1],\
                 wapi_info->local_gateway[2], wapi_info->local_gateway[3]);/* set net configuration */
+}
+
+static void wapi_set_dhcp(m0804c_handler_t *const self)
+{
+    wapi_info_t *wapi_info = self->input_arg->data_provider->pf_get_wapi_info(self);
+    AT_CMD_SEND(wapi_get_at_handler(self), SET_DHCP);/* set net configuration */
+}
+
+static void wapi_set_net_config_by_mode(m0804c_handler_t *const self)
+{
+    if (!self || !PRIV_DATA(self))
+        return;
+
+    if (PRIV_DATA(self)->is_use_dhcp)
+    {
+        wapi_set_dhcp(self);
+    }
+    else
+    {
+        wapi_set_net_config(self);
+    }
 }
 
 #if IS_USE_CONN_BY_CERT
@@ -769,11 +801,11 @@ static void check_connect(uint8_t *buf, uint16_t len, void *arg)
         m0804c_init(self, PRIV_DATA(self)->recv_callbacks);/* restart init and connect process */
 #if IS_USE_CONN_BY_CERT
         if(CONN_BY_CERT == PRIV_DATA(self)->wapi_conn_mode)
-            m0804c_use_cert_conn(self);
+            m0804c_use_cert_conn(self, PRIV_DATA(self)->is_use_dhcp);
 #endif
 #if IS_USE_CONN_BY_PWD
         if(CONN_BY_PWD == PRIV_DATA(self)->wapi_conn_mode)
-            m0804c_use_pwd_conn(self);
+            m0804c_use_pwd_conn(self, PRIV_DATA(self)->is_use_dhcp);
 #endif
         return; /* Found substring, match successful */
     }
@@ -1028,18 +1060,17 @@ static wapi_status_t generic_process(m0804c_handler_t *const self, wapi_process_
     
     int8_t err_index = -1;
     uint8_t table_num = table_size / sizeof(wapi_process_t);
-    wapi_status_t ret = WAPI_ERR_OTHERS;
     
-    for(uint8_t i = 0; i < WAPI_PROCESS_RETRY_MAX; i++)
-    {
-        ret = table_process(self, process_table, table_num, &err_index);
-        if(WAPI_OK == ret)
-        {
-            WAPI_DEBUG_OUT("%s completed successfully on attempt %u", process_name, i + 1);
-            break;
-        }
-        WAPI_DEBUG_ERR("%s failed: step %u, attempt %u/%u", process_name, err_index, i + 1, WAPI_PROCESS_RETRY_MAX);
-    }
+    /* Run the table exactly once. Retrying belongs to the owning thread
+     * (generic_wapi_thread), which is the only place that can re-arm the
+     * process through pf_process_retry/pf_process_start (i.e. give back and
+     * re-take the sync semaphores). Re-running the table here duplicated that
+     * logic while silently skipping the re-arm step. */
+    wapi_status_t ret = table_process(self, process_table, table_num, &err_index);
+    if(WAPI_OK == ret)
+        WAPI_DEBUG_OUT("%s completed successfully", process_name);
+    else
+        WAPI_DEBUG_ERR("%s failed at step %d", process_name, err_index);
     
     return ret;
 }
@@ -1092,26 +1123,26 @@ static void generic_wapi_thread(m0804c_handler_t *self,
                                 wapi_status_t (*process_fn)(m0804c_handler_t *),
                                 wapi_process_callbacks_t *cbs)
 {
-    uint8_t fail_cnt = 0;
+    uint8_t attempt = 0;
     while (1)
     {
         if(cbs && cbs->pf_process_start)
             cbs->pf_process_start(self);
 
         wapi_status_t ret = process_fn(self);
-        
+        attempt++;
+
         if(WAPI_OK == ret)
         {
-            fail_cnt = 0;
+            attempt = 0;
             if(self->input_arg->callbacks && self->input_arg->callbacks->pf_process_success_cb)
                 self->input_arg->callbacks->pf_process_success_cb(self, cbs->process_type);
             if(cbs && cbs->pf_process_success)
                 cbs->pf_process_success(self);
         } 
-        else if(fail_cnt < WAPI_PROCESS_FAIL_MAX)
+        else if(attempt < WAPI_PROCESS_ATTEMPT_MAX)
         {
-            fail_cnt++;
-            WAPI_DEBUG_ERR("%s failed, retry_count=%u/%u", cbs->process_name, fail_cnt, WAPI_PROCESS_FAIL_MAX);
+            WAPI_DEBUG_ERR("%s failed, attempt %u/%u", cbs->process_name, attempt, WAPI_PROCESS_ATTEMPT_MAX);
             if(cbs && cbs->pf_process_retry)
                 cbs->pf_process_retry(self);
             else if(cbs && cbs->pf_process_start)
@@ -1119,7 +1150,11 @@ static void generic_wapi_thread(m0804c_handler_t *self,
         }
         else
         {
-            WAPI_DEBUG_ERR("%s failed permanently after %u attempts", cbs->process_name, WAPI_PROCESS_FAIL_MAX);
+            /* This process is exhausted: hand the failure to the APP layer,
+             * which owns the whole-flow retry policy, then re-arm so a later
+             * request gets a full attempt budget again. */
+            WAPI_DEBUG_ERR("%s failed permanently after %u attempts", cbs->process_name, WAPI_PROCESS_ATTEMPT_MAX);
+            attempt = 0;
             if(self->input_arg->callbacks && self->input_arg->callbacks->pf_process_err_cb)
                 self->input_arg->callbacks->pf_process_err_cb(self, cbs->process_type);
         }
@@ -1506,24 +1541,26 @@ wapi_status_t m0804c_init(m0804c_handler_t *const self, at_recv_callback_item_t 
     return WAPI_OK;
 }
 #if IS_USE_CONN_BY_CERT
-wapi_status_t m0804c_use_cert_conn(m0804c_handler_t *const self)
+wapi_status_t m0804c_use_cert_conn(m0804c_handler_t *const self, bool use_dhcp)
 {
 
     if(!self || !PRIV_DATA(self) || !PRIV_DATA(self)->is_inited)
         return WAPI_ERR_HANDLER_NOT_READY;
     at_recv_hook_unregister(PRIV_DATA(self)->at_handler, NULL);
+    PRIV_DATA(self)->is_use_dhcp = use_dhcp;
     AT_OS(self)->pf_sema_give(PRIV_DATA(self)->use_cert_sema_handle);
     return WAPI_OK;
 }
 #endif
 
 #if IS_USE_CONN_BY_PWD
-wapi_status_t m0804c_use_pwd_conn(m0804c_handler_t *const self)
+wapi_status_t m0804c_use_pwd_conn(m0804c_handler_t *const self, bool use_dhcp)
 {
 
     if(!self || !PRIV_DATA(self) || !PRIV_DATA(self)->is_inited)
         return WAPI_ERR_HANDLER_NOT_READY;
     at_recv_hook_unregister(PRIV_DATA(self)->at_handler, NULL);
+    PRIV_DATA(self)->is_use_dhcp = use_dhcp;
     AT_OS(self)->pf_sema_give(PRIV_DATA(self)->use_pwd_sema_handle);
     return WAPI_OK;
 }

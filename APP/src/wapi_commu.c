@@ -8,7 +8,9 @@
 #include "protocol_high_relia.h"
 
 #define ERROR_PENDING_TIMEOUT_MS              (5*1000)   /* ms to wait for a pending response before giving up */
-#define WAPI_PROCESS_FAIL_MAX                 2
+/* Whole-flow retry budget (init -> cert/pwd -> connect). Distinct from the
+ * per-table retry handled inside the WAPI handler. */
+#define WAPI_COMMU_FLOW_RETRY_MAX             2
 /* -------------------------------------------------------------------------- */
 /*                        Forward declarations (OSAL)                         */
 /* -------------------------------------------------------------------------- */
@@ -50,6 +52,7 @@ static high_relia_ops_t g_high_relia_ops =
 /* -------------------------------------------------------------------------- */
 
 static wapi_commu_state_t g_wapi_commu_state = COMMU_STATE_NOT_CALLED;
+static uint8_t g_wapi_commu_fail_count = 0;   /* Whole-flow failure counter, reset on successful connect */
 
 wapi_commu_state_t wapi_query_commu_state(void)
 {
@@ -86,7 +89,7 @@ static void wapi_commu_conn(void)
         return;
     }
 
-    ret = m0804c_use_cert_conn(&g_wapi_handler_inst);
+    ret = m0804c_use_cert_conn(&g_wapi_handler_inst, false);
     if (WAPI_OK != ret)
     {
         WAPI_COMMU_DEBUG_ERR("WAPI handler use cert connect failed: %d\r\n", ret);
@@ -110,11 +113,10 @@ static void wapi_commu_fail_exec(void)
 
 static void wapi_commu_fail(void)
 {
-    static uint8_t fail_count = 0;
-    fail_count++;
-    if(fail_count >= WAPI_PROCESS_FAIL_MAX)
+    g_wapi_commu_fail_count++;
+    if(g_wapi_commu_fail_count >= WAPI_COMMU_FLOW_RETRY_MAX)
     {
-        fail_count = 0;
+        g_wapi_commu_fail_count = 0;
         wapi_commu_fail_exec();
     }
     else
@@ -410,7 +412,7 @@ void wapi_config_init(pf_at_recv_parse_t recv_parse_cb)
         return;
     }
 
-    ret = m0804c_use_pwd_conn(&g_wapi_handler_inst);
+    ret = m0804c_use_pwd_conn(&g_wapi_handler_inst, false);
     if (WAPI_OK != ret)
     {
         g_wapi_config_state = CONFIG_STATE_NOT_CALLED;
@@ -478,6 +480,7 @@ static void wapi_process_success_cb(struct m0804c_handler *const self, wapi_proc
         case PROCESS_CONNECT:
             led_on_off(WAPI_COMMU, LED_CMD_ON);
             g_wapi_commu_state = COMMU_STATE_SUCCESS;
+            g_wapi_commu_fail_count = 0;
             WAPI_COMMU_DEBUG_OUT("WAPI PROCESS CONNECT SUCCESS\r\n");
             break;
         default:

@@ -36,10 +36,16 @@
 /*     } while(0) */
 #define AT_DEBUG_OUT(fmt, ...)      dbg_console_printf(fmt "\r\n", ##__VA_ARGS__)
 #define AT_DEBUG_ERR(fmt, ...)      SEGGER_RTT_printf(0, RTT_CTRL_TEXT_BRIGHT_RED fmt RTT_CTRL_RESET "\r\n", ##__VA_ARGS__)//dbg_console_printf(fmt "\r\n", ##__VA_ARGS__)
-#define AT_DEBUG_STRING(p_data, len)  \
-    do {                                  \
-        dbg_console_write((const char*)(p_data), (len));        \
-        dbg_console_write("\r\n", 2);                           \
+// #define AT_DEBUG_STRING(p_data, len)  \
+//     do {                                  \
+//         dbg_console_write((const char*)(p_data), (len));        \
+//         dbg_console_write("\r\n", 2);                           \
+//     } while(0)
+#define AT_DEBUG_STRING(p_data, len) \
+    do { \
+        SEGGER_RTT_WriteString(0, RTT_CTRL_TEXT_BRIGHT_YELLOW); \
+        SEGGER_RTT_Write(0, (const char*)p_data, len); \
+        SEGGER_RTT_WriteString(0, RTT_CTRL_RESET "\r\n"); \
     } while(0)
 
 

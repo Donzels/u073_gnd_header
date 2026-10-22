@@ -186,10 +186,10 @@ void m0804c_at_error_recv_isr_cb(m0804c_handler_t *const self);
 
 wapi_status_t m0804c_init(m0804c_handler_t *const self, at_recv_callback_item_t recv_callback);
 #if IS_USE_CONN_BY_CERT
-wapi_status_t m0804c_use_cert_conn(m0804c_handler_t *const self);
+wapi_status_t m0804c_use_cert_conn(m0804c_handler_t *const self, bool use_dhcp);
 #endif
 #if IS_USE_CONN_BY_PWD
-wapi_status_t m0804c_use_pwd_conn(m0804c_handler_t *const self);
+wapi_status_t m0804c_use_pwd_conn(m0804c_handler_t *const self, bool use_dhcp);
 #endif
 /* recv_parse_cb = NULL means send without response */
 wapi_status_t m0804c_send(m0804c_handler_t *const self, uint8_t *buf, uint16_t length,\
